@@ -35,75 +35,186 @@ When opening the browser to start a new session, a page or pop-up shows up and p
 3. Rabbit-hole prevention: See alignment-ambiguity under **edge cases**.
 4. False-positive override: Add an option to override a block if a page is blocked that should be allowed. Additionally, the link to the page should be logged as well as the goal. This will provide some data that will help fine tune the app on various failure cases.
 
-## Implementation ideas
-A way to implement the verification of alignment that allows the user to describe their design in natural language would be to pass website contents to an LLM, and have the LLM verify it. There could be a pop-up for the user to enter their goal, which is saved to some global state. This goal would then be injected into an LLM along with perhaps the HTML contents of the web page, asking the LLM to output a boolean asking if the website aligns with the 
+## Implementation Details
 
+### Architecture
+The extension will consist of three main components:
+1. **Background Service Worker**: Manages state (current goal, allowlist, history), intercepts navigation events, and communicates with the backend API
+2. **Content Script**: Extracts page content and metadata from active tabs
+3. **UI Components**: Goal input popup, blocked page redirect, settings panel
 
----
+The backend infrastructure:
+1. **API Gateway**: Public-facing REST API endpoint with authentication
+2. **Lambda Function**: Processes requests and communicates with Bedrock
+3. **AWS Bedrock**: LLM service (Claude or other models for cost efficiency)
 
-## Feedback
+### Technology Stack
+- **Browser Extension**: Chrome Extension Manifest V3 (compatible with Chrome, Edge, Brave)
+- **Backend**: AWS API Gateway + Lambda + Bedrock
+- **LLM Provider**: AWS Bedrock (Claude Haiku or similar for cost efficiency)
+- **Storage**: Chrome Storage API for goals, settings, and history
+- **Language**: TypeScript for extension, Python/Node.js for Lambda
 
-### Clarifying Questions
+### Authentication Strategy
 
-1. **Goal duration and completion**: How does a user signal that they've completed their goal? Is there a manual "end session" action, or does closing the browser end it? What happens if they reopen the browser later?
+**Initial Implementation (Personal Use):**
+- Generate a single API key in AWS API Gateway
+- Store key privately in extension code (not committed to public repo)
+- API Gateway validates key on each request
+- Simple and sufficient for personal use
 
-2. **Goal modification**: You mention preventing quick goal changes with a math challenge, but what about legitimate goal changes? If a user realizes they need to pivot to a different task, what's the intended flow?
+**Future Public Release Options:**
 
-3. **Alignment ambiguity**: What happens when the LLM is uncertain about alignment (e.g., 60% confidence)? Does the user get a choice, or is there a hard threshold?
+*Option 1: AWS Cognito + IAM (Recommended for public)*
+- Users sign up/log in via Cognito
+- JWT tokens issued and validated by API Gateway
+- Rate limiting per user identity
+- Track and revoke access per user
+- No secrets in public extension code
 
-4. **Initial setup**: Does the extension block all browsing until a goal is set, or can users browse freely without setting a goal?
+*Option 2: User-Provided API Keys*
+- Users generate their own AWS API key
+- Store in extension settings (Chrome storage)
+- Users control their own costs
+- Simple to implement, easy to revoke
 
-5. **Goal specificity**: What level of detail is expected in goals? Is "be productive" acceptable, or should it be "research React hooks for my project"?
+For now, the simpler single API key approach will be used. Migration to Cognito can happen before public release.
 
-6. **Redirect page functionality**: When redirected to the goal reminder page, can users navigate back to allowed sites, or must they close the tab?
+### Core Flow
+1. User navigates to new URL → background worker intercepts
+2. Check allowlist (banks, medical sites) → if match, allow immediately
+3. Check if search engine → extract search terms, verify alignment with goal
+4. Extract page content (title, meta description, first ~1000 chars of text)
+5. Send to backend API (Lambda) with authentication header
+6. Lambda invokes Bedrock with prompt: "Goal: {goal}. Page: {content}. Aligned? Return: yes/no/uncertain"
+7. Lambda returns decision to extension
+8. Apply decision logic based on response and uncertainty streak
+9. Allow page or redirect to goal reminder
 
-### Technological Concerns
+### Backend API Structure
 
-1. **LLM latency**: Checking every page load with an LLM could introduce noticeable delays (500ms-2s per request). This could frustrate users and make browsing feel sluggish.
+**API Gateway Endpoint:**
+```
+POST /check-alignment
+Headers:
+  - x-api-key: {API_KEY}
+  - Content-Type: application/json
+Body:
+  {
+    "goal": "user's current goal",
+    "pageTitle": "page title",
+    "pageUrl": "https://example.com",
+    "pageContent": "truncated content...",
+    "goalSpecificity": "vague|specific"
+  }
+Response:
+  {
+    "aligned": "yes|no|uncertain",
+    "confidence": 0.85
+  }
+```
 
-2. **Cost**: LLM API calls for every page visit could become expensive quickly. Heavy browsing sessions might generate hundreds of requests per day.
+**Lambda Function:**
+- Validates request payload
+- Constructs prompt for Bedrock
+- Invokes Bedrock model (Claude Haiku)
+- Parses response and returns decision
+- Handles errors gracefully (fail open on API errors)
 
-3. **Privacy**: Sending full HTML content to an external LLM raises privacy concerns. Users may visit pages with sensitive information (banking, health, personal emails).
+### LLM Prompt Structure
+```
+You are helping enforce focus. The user's goal is: "{goal}"
 
-4. **Offline functionality**: What happens when there's no internet connection or the LLM API is down? Does the extension fail open (allow everything) or fail closed (block everything)?
+Page title: {title}
+Page URL: {url}
+Page content: {truncated_content}
 
-5. **Dynamic content**: Many modern websites load content dynamically via JavaScript. Checking only initial HTML might miss the actual content the user sees.
+Is this page aligned with the user's goal?
+- Return "yes" if clearly aligned
+- Return "no" if clearly not aligned  
+- Return "uncertain" if ambiguous
 
-6. **Content size limits**: Some pages have massive HTML. LLMs have token limits that might be exceeded, requiring truncation or summarization.
+Response format: {"aligned": "yes|no|uncertain", "confidence": 0.0-1.0}
+```
 
-### Product Concerns
+### Infrastructure Costs Estimate
+- **Bedrock (Claude Haiku)**: ~$0.25 per 1M input tokens, ~$1.25 per 1M output tokens
+- **API Gateway**: $3.50 per million requests + $0.09/GB data transfer
+- **Lambda**: Minimal (within free tier for this use case)
 
-1. **User friction**: Requiring a goal before every browsing session adds significant friction. Users might abandon the extension if it feels too restrictive.
+**Monthly estimate for 100 pages/day:**
+- 3,000 requests/month × ~2K tokens input = 6M tokens input = ~$1.50
+- 3,000 requests × ~50 tokens output = 150K tokens output = ~$0.19
+- API Gateway: 3,000 requests = ~$0.01
+- **Total: ~$2/month**
 
-2. **False positives**: LLMs can misclassify pages. Blocking a legitimately relevant page could be extremely frustrating and erode trust.
+### Data Storage
+- `currentGoal`: {text: string, timestamp: number, specificity: "vague"|"specific"}
+- `completedGoals`: Array of {text, startTime, endTime}
+- `allowlist`: Array of URL patterns
+- `uncertaintyStreak`: number
+- `settings`: {mathChallengeEnabled, redirectDelay, maxUncertaintyStreak}
 
-3. **Legitimate breaks**: Sometimes taking a mental break is productive. The extension doesn't account for intentional, healthy diversions.
+### Privacy Considerations
+- Allowlist bypasses LLM entirely for sensitive sites
+- No persistent logging of page content
+- API calls include only truncated, sanitized content
+- User can view/clear all stored data
 
-4. **Learning curve**: Users need to learn what goal specificity works best. Too vague and everything passes; too specific and legitimate research gets blocked.
+## Implementation Plan
 
-5. **Competitive landscape**: How does this differ from existing focus tools like Freedom, Cold Turkey, or browser-native focus modes?
+### Phase 1: Core MVP (Week 1-2)
+1. Set up Chrome extension boilerplate with Manifest V3
+2. Set up AWS infrastructure:
+   - Create API Gateway with API key authentication
+   - Create Lambda function for Bedrock integration
+   - Configure Bedrock access (Claude Haiku model)
+3. Implement goal input popup and storage
+4. Create background worker to intercept navigation
+5. Build API integration (extension → API Gateway → Lambda → Bedrock)
+6. Implement simple allow/block logic
+7. Create blocked page redirect UI
 
-6. **Value proposition**: Is the LLM-based alignment check significantly better than simpler URL blocklists or allowlists?
+**Deliverable**: Basic extension that prompts for goal and blocks/allows pages based on LLM response via AWS backend
 
-### Missing Edge Cases
+### Phase 2: Edge Cases & UX (Week 3)
+1. Add allowlist functionality for sensitive sites
+2. Implement redirect delay (3 second timer)
+3. Add search engine detection and query checking
+4. Build uncertainty streak tracking
+5. Add math challenge for goal changes/disable
+6. Implement goal completion flow
 
-1. **Redirects and pop-ups**: What happens with automatic redirects, OAuth flows, or payment gateways that navigate through multiple domains?
+**Deliverable**: Functional extension handling major edge cases
 
-2. **Embedded content**: If an allowed page has embedded YouTube videos or social media widgets, are those checked separately?
+### Phase 3: Polish & Features (Week 4)
+1. Add timed goals feature
+2. Build settings panel (including API key management for future)
+3. Implement completed goals history view
+4. Add specificity detection (vague vs specific goals)
+5. Optimize content extraction and token usage
+6. Error handling for API failures
+7. Add CloudWatch monitoring for backend costs
 
-3. **Search engines**: Are search result pages always allowed? What about clicking through results?
+**Deliverable**: Feature-complete extension ready for personal use
 
-4. **Documentation and reference**: Programming documentation often links to tangentially related topics. Should all docs be allowed if the goal is "learn Python"?
+### Phase 4: Testing & Iteration (Ongoing)
+1. Daily dogfooding and bug fixes
+2. Monitor API costs via CloudWatch
+3. Tune LLM prompts based on false positives/negatives
+4. Adjust uncertainty thresholds
+5. Add nice-to-have features as needed
 
-5. **Multi-step workflows**: Some tasks require visiting seemingly unrelated sites (e.g., "book a flight" might require checking visa requirements, weather, hotel booking sites).
+**Success Metrics**:
+- Extension used daily for 2+ weeks
+- <5% false positive rate on blocked pages
+- API costs under $5/month
+- Subjective improvement in browsing focus
 
-6. **Shared computers**: How does the extension handle multiple users or profiles on the same browser?
-
-7. **Mobile browsing**: Does this extend to mobile browsers, or is it desktop-only?
-
-8. **Background tabs**: If a tab loads in the background (e.g., from a link with target="_blank"), when is it checked?
-
-9. **Browser extensions and internal pages**: Should chrome://extensions, browser settings, or other extension pages be checked?
-
-10. **Emergency access**: What if a user urgently needs to access something unrelated to their goal (e.g., emergency contact information)?
+### Future: Public Release Preparation
+1. Migrate to AWS Cognito authentication
+2. Implement per-user rate limiting
+3. Add user dashboard for usage tracking
+4. Set up WAF rules for abuse prevention
+5. Create user documentation and onboarding flow 
 
