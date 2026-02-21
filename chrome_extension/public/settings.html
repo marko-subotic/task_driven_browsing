@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Settings - Task Driven Browsing</title>
+  <style>
+    body {
+      width: 500px;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    h2 {
+      margin-top: 0;
+      color: #333;
+    }
+    .section {
+      margin: 20px 0;
+    }
+    label {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 5px;
+      color: #333;
+    }
+    .help-text {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 10px;
+    }
+    textarea {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: monospace;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+    .button {
+      background: #4285f4;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+    .button:hover {
+      background: #357ae8;
+    }
+    .button.secondary {
+      background: #f1f3f4;
+      color: #333;
+    }
+    .button.secondary:hover {
+      background: #e8eaed;
+    }
+    .status {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 4px;
+      display: none;
+    }
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <h2>Settings</h2>
+  
+  <div class="section">
+    <label>Allowlist</label>
+    <div class="help-text">
+      Sites matching these patterns will always be allowed (one per line).
+      Examples: accounts.google.com, login., bank, medical
+    </div>
+    <textarea id="allowlist" rows="10"></textarea>
+  </div>
+
+  <div>
+    <button id="save-btn" class="button">Save</button>
+    <button id="reset-btn" class="button secondary">Reset to Defaults</button>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <script src="../src/settings.js"></script>
+</body>
+</html>

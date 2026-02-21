@@ -1,0 +1,11 @@
+# Ignore API keys and secrets
+src/config.js
+
+# OS files
+.DS_Store
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo

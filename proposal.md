@@ -51,9 +51,13 @@ The backend infrastructure:
 ### Technology Stack
 - **Browser Extension**: Chrome Extension Manifest V3 (compatible with Chrome, Edge, Brave)
 - **Backend**: AWS API Gateway + Lambda + Bedrock
+- **Infrastructure as Code**: AWS CDK with CloudFormation
 - **LLM Provider**: AWS Bedrock (Claude Haiku or similar for cost efficiency)
 - **Storage**: Chrome Storage API for goals, settings, and history
-- **Language**: TypeScript for extension, Python/Node.js for Lambda
+- **Languages**: 
+  - Extension: TypeScript
+  - Lambda Handler: Python 3.12
+  - Infrastructure: TypeScript (CDK)
 
 ### Authentication Strategy
 
@@ -94,6 +98,10 @@ For now, the simpler single API key approach will be used. Migration to Cognito 
 ### Backend API Structure
 
 **API Gateway Endpoint:**
+- Basic API Gateway domain (no custom domain/Route 53)
+- Format: `https://{api-id}.execute-api.{region}.amazonaws.com/{stage}`
+- Stage: `prod`
+
 ```
 POST /check-alignment
 Headers:
@@ -115,11 +123,20 @@ Response:
 ```
 
 **Lambda Function:**
+- Runtime: Python 3.12
+- Handler: Processes alignment check requests
 - Validates request payload
 - Constructs prompt for Bedrock
 - Invokes Bedrock model (Claude Haiku)
 - Parses response and returns decision
 - Handles errors gracefully (fail open on API errors)
+
+**CDK Stack Components:**
+- API Gateway REST API with API key authentication
+- Lambda function with Bedrock permissions
+- IAM role for Lambda with Bedrock invoke permissions
+- API Gateway usage plan and API key
+- CloudWatch log groups for monitoring
 
 ### LLM Prompt Structure
 ```
@@ -164,16 +181,25 @@ Response format: {"aligned": "yes|no|uncertain", "confidence": 0.0-1.0}
 ## Implementation Plan
 
 ### Phase 1: Core MVP (Week 1-2)
+
+**Backend Infrastructure:**
+1. Initialize CDK project with TypeScript
+2. Create CDK stack with:
+   - API Gateway REST API (basic domain)
+   - Lambda function (Python 3.12 handler)
+   - API key authentication
+   - Bedrock permissions for Lambda
+3. Implement Lambda handler for alignment checking
+4. Deploy stack and retrieve API endpoint + key
+5. Test API manually with curl/Postman
+
+**Browser Extension:**
 1. Set up Chrome extension boilerplate with Manifest V3
-2. Set up AWS infrastructure:
-   - Create API Gateway with API key authentication
-   - Create Lambda function for Bedrock integration
-   - Configure Bedrock access (Claude Haiku model)
-3. Implement goal input popup and storage
-4. Create background worker to intercept navigation
-5. Build API integration (extension → API Gateway → Lambda → Bedrock)
-6. Implement simple allow/block logic
-7. Create blocked page redirect UI
+2. Implement goal input popup and storage
+3. Create background worker to intercept navigation
+4. Build API integration (extension → API Gateway → Lambda → Bedrock)
+5. Implement simple allow/block logic
+6. Create blocked page redirect UI
 
 **Deliverable**: Basic extension that prompts for goal and blocks/allows pages based on LLM response via AWS backend
 
