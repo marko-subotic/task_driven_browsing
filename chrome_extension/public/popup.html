@@ -61,6 +61,62 @@
     .hidden {
       display: none;
     }
+    .timer-section {
+      margin: 15px 0;
+    }
+    .timer-section label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #666;
+      cursor: pointer;
+    }
+    .timer-section input[type="checkbox"] {
+      cursor: pointer;
+    }
+    .timer-inputs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      justify-content: center;
+    }
+    .time-input {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .time-input input {
+      width: 50px;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 16px;
+      text-align: center;
+    }
+    .time-input span {
+      font-size: 14px;
+      color: #666;
+    }
+    .time-separator {
+      font-size: 20px;
+      font-weight: bold;
+      color: #333;
+    }
+    .timer-display {
+      background: #fff3cd;
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 10px;
+      text-align: center;
+      font-size: 14px;
+      color: #856404;
+    }
+    .timer-display .time-remaining {
+      font-weight: 600;
+      font-size: 16px;
+    }
   </style>
 </head>
 <body>
@@ -68,6 +124,24 @@
     <h2>Set Your Goal</h2>
     <p>What would you like to accomplish in this browsing session?</p>
     <textarea id="goal-input" class="goal-input" rows="3" placeholder="e.g., Research React hooks for my project"></textarea>
+    
+    <div class="timer-section">
+      <label>
+        <input type="checkbox" id="enable-timer"> Set a timer (optional)
+      </label>
+      <div id="timer-inputs" class="timer-inputs hidden">
+        <div class="time-input">
+          <input type="number" id="hours-input" min="0" max="23" value="0">
+          <span>h</span>
+        </div>
+        <span class="time-separator">:</span>
+        <div class="time-input">
+          <input type="number" id="minutes-input" min="0" max="59" value="30">
+          <span>m</span>
+        </div>
+      </div>
+    </div>
+    
     <button id="set-goal-btn" class="button">Start Session</button>
   </div>
 
@@ -76,6 +150,9 @@
     <div class="current-goal">
       <div class="goal-text" id="current-goal-text"></div>
       <div class="goal-time" id="goal-time"></div>
+    </div>
+    <div id="timer-display" class="timer-display hidden">
+      <div>Time remaining: <span class="time-remaining" id="time-remaining"></span></div>
     </div>
     <button id="complete-goal-btn" class="button">Complete Goal</button>
     <button id="change-goal-btn" class="button secondary">Change Goal</button>

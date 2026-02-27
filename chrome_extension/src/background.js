@@ -6,8 +6,11 @@ import { API_ENDPOINT, API_KEY } from './config.js';
 let currentGoal = null;
 let uncertaintyStreak = 0;
 let allowlist = [];
+let timerCheckInterval = null;
+let noGoalNavigationCount = 0;
 const MAX_UNCERTAINTY_STREAK = 5;
 const REDIRECT_DELAY_MS = 3000;
+const NO_GOAL_GRACE_PERIOD = 3;
 
 // Default allowlist patterns for sensitive sites
 const DEFAULT_ALLOWLIST = [
@@ -51,7 +54,7 @@ chrome.storage.local.get(['currentGoal', 'uncertaintyStreak', 'allowlist'], (res
 // Track vetted tabs
 const vettedTabs = new Set();
 
-// Listen for navigation events
+// Listen for navigation events (including SPA route changes)
 chrome.webNavigation.onCommitted.addListener(async (details) => {
   // Only check main frame navigations
   if (details.frameId !== 0) return;
@@ -74,7 +77,65 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
 
   // Check if we have a goal
   if (!currentGoal) {
-    chrome.action.openPopup();
+    noGoalNavigationCount++;
+    
+    if (noGoalNavigationCount > NO_GOAL_GRACE_PERIOD) {
+      // Open goal-setting page in new tab
+      chrome.tabs.create({ 
+        url: chrome.runtime.getURL('public/set-goal.html'),
+        active: true 
+      });
+    }
+    return;
+  }
+
+  // Check allowlist immediately
+  if (isAllowlisted(details.url)) {
+    vettedTabs.add(details.tabId);
+    return;
+  }
+
+  // Schedule alignment check after delay
+  const timeoutId = setTimeout(() => {
+    pendingChecks.delete(details.tabId);
+    checkAlignment(details.tabId, details.url);
+  }, REDIRECT_DELAY_MS);
+  
+  pendingChecks.set(details.tabId, timeoutId);
+});
+
+// Listen for history state updates (SPA navigation like YouTube)
+chrome.webNavigation.onHistoryStateUpdated.addListener(async (details) => {
+  // Only check main frame navigations
+  if (details.frameId !== 0) return;
+  
+  // Skip chrome://, extension pages, and empty URLs
+  if (details.url.startsWith('chrome://') || 
+      details.url.startsWith('chrome-extension://') ||
+      details.url === '' ||
+      details.url === 'about:blank') {
+    return;
+  }
+
+  // Cancel any pending check for this tab
+  if (pendingChecks.has(details.tabId)) {
+    clearTimeout(pendingChecks.get(details.tabId));
+  }
+
+  // Mark as not vetted on navigation
+  vettedTabs.delete(details.tabId);
+
+  // Check if we have a goal
+  if (!currentGoal) {
+    noGoalNavigationCount++;
+    
+    if (noGoalNavigationCount > NO_GOAL_GRACE_PERIOD) {
+      // Open goal-setting page in new tab
+      chrome.tabs.create({ 
+        url: chrome.runtime.getURL('public/set-goal.html'),
+        active: true 
+      });
+    }
     return;
   }
 
@@ -95,17 +156,7 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
 
 // Listen for tab activation (switching tabs)
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  // Skip if already vetted
-  if (vettedTabs.has(activeInfo.tabId)) {
-    return;
-  }
-
-  // Check if we have a goal
-  if (!currentGoal) {
-    return;
-  }
-
-  // Get tab info
+  // Get tab info first
   const tab = await chrome.tabs.get(activeInfo.tabId);
   
   // Skip chrome://, extension pages, and empty URLs
@@ -113,6 +164,25 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
       tab.url.startsWith('chrome-extension://') ||
       tab.url === '' ||
       tab.url === 'about:blank') {
+    return;
+  }
+
+  // Skip if already vetted
+  if (vettedTabs.has(activeInfo.tabId)) {
+    return;
+  }
+
+  // Check if we have a goal
+  if (!currentGoal) {
+    noGoalNavigationCount++;
+    
+    if (noGoalNavigationCount > NO_GOAL_GRACE_PERIOD) {
+      // Open goal-setting page in new tab
+      chrome.tabs.create({ 
+        url: chrome.runtime.getURL('public/set-goal.html'),
+        active: true 
+      });
+    }
     return;
   }
 
@@ -240,23 +310,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SET_GOAL') {
     currentGoal = message.goal;
     chrome.storage.local.set({ currentGoal });
+    
+    // Reset navigation count when goal is set
+    noGoalNavigationCount = 0;
+    
+    // Start timer check if goal has timer
+    if (currentGoal.timerEnd) {
+      startTimerCheck();
+    }
+    
     sendResponse({ success: true });
   } else if (message.type === 'GET_GOAL') {
     sendResponse({ goal: currentGoal });
   } else if (message.type === 'COMPLETE_GOAL') {
-    // Store completed goal
-    chrome.storage.local.get(['completedGoals'], (result) => {
-      const completed = result.completedGoals || [];
-      completed.push({
-        ...currentGoal,
-        endTime: Date.now()
-      });
-      chrome.storage.local.set({ completedGoals: completed });
-    });
-    
-    currentGoal = null;
-    chrome.storage.local.set({ currentGoal: null });
-    chrome.action.openPopup();
+    completeGoal();
     sendResponse({ success: true });
   } else if (message.type === 'RELOAD_ALLOWLIST') {
     chrome.storage.local.get(['allowlist'], (result) => {
@@ -267,4 +334,64 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ allowlist: DEFAULT_ALLOWLIST });
   }
   return true; // Keep channel open for async response
+});
+
+function completeGoal() {
+  // Store completed goal
+  chrome.storage.local.get(['completedGoals'], (result) => {
+    const completed = result.completedGoals || [];
+    completed.push({
+      ...currentGoal,
+      endTime: Date.now()
+    });
+    chrome.storage.local.set({ completedGoals: completed });
+  });
+  
+  // Clear timer check
+  if (timerCheckInterval) {
+    clearInterval(timerCheckInterval);
+    timerCheckInterval = null;
+  }
+  
+  // Reset navigation count
+  noGoalNavigationCount = 0;
+  
+  currentGoal = null;
+  chrome.storage.local.set({ currentGoal: null });
+  chrome.action.openPopup();
+}
+
+function startTimerCheck() {
+  // Clear existing interval
+  if (timerCheckInterval) {
+    clearInterval(timerCheckInterval);
+  }
+  
+  // Check every second
+  timerCheckInterval = setInterval(() => {
+    if (!currentGoal || !currentGoal.timerEnd) {
+      clearInterval(timerCheckInterval);
+      timerCheckInterval = null;
+      return;
+    }
+    
+    // Check if timer expired
+    if (Date.now() >= currentGoal.timerEnd) {
+      completeGoal();
+    }
+  }, 1000);
+}
+
+// Resume timer check on startup if goal has timer
+chrome.storage.local.get(['currentGoal'], (result) => {
+  if (result.currentGoal && result.currentGoal.timerEnd) {
+    currentGoal = result.currentGoal;
+    
+    // Check if already expired
+    if (Date.now() >= currentGoal.timerEnd) {
+      completeGoal();
+    } else {
+      startTimerCheck();
+    }
+  }
 });

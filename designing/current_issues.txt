@@ -1,0 +1,2 @@
+- the page content fully does not work, it is only based on the search url
+- when there is no goal selected it is easy to bypass the extension. browsing should be hard/impossible without a goal set
